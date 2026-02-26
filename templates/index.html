@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ASL to Text</title>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+    :root {
+      --bg:     #0d0f14;
+      --surf:   #161b26;
+      --surf2:  #1e2535;
+      --acc:    #6c63ff;
+      --acc2:   #00d4aa;
+      --txt:    #e8eaf6;
+      --muted:  #6b7280;
+      --danger: #ef4444;
+      --ok:     #22c55e;
+      --border: rgba(108,99,255,0.2);
+    }
+
+    body {
+      background: var(--bg); color: var(--txt);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh; display: flex; flex-direction: column;
+    }
+
+    /* ── HEADER ── */
+    header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 16px 28px;
+      background: var(--surf); border-bottom: 1px solid var(--border);
+    }
+    header h1 { font-size: 1.3rem; font-weight: 700; }
+    header h1 span { color: var(--acc); }
+    .hbadge {
+      margin-left: auto;
+      background: rgba(108,99,255,0.13); border: 1px solid var(--border);
+      color: var(--acc); font-size: .7rem; font-weight: 600;
+      padding: 3px 10px; border-radius: 20px; letter-spacing: .8px;
+    }
+    .model-status {
+      font-size: .72rem; padding: 3px 10px; border-radius: 20px;
+      font-weight: 600;
+    }
+    .model-status.ok  { background: rgba(34,197,94,.13); color: var(--ok); border: 1px solid rgba(34,197,94,.3); }
+    .model-status.err { background: rgba(239,68,68,.13);  color: var(--danger); border: 1px solid rgba(239,68,68,.3); }
+
+    /* ── MAIN ── */
+    main {
+      flex: 1; display: grid; grid-template-columns: 1fr 1fr;
+      gap: 20px; padding: 20px 28px;
+      max-width: 1400px; margin: 0 auto; width: 100%;
+    }
+
+    /* ── PANEL ── */
+    .panel {
+      background: var(--surf); border: 1px solid var(--border);
+      border-radius: 14px; overflow: hidden; display: flex; flex-direction: column;
+    }
+    .ph {
+      display: flex; align-items: center; gap: 9px;
+      padding: 13px 18px; border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,.02);
+    }
+    .ph h2 { font-size: .8rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted); transition: all .3s; flex-shrink: 0;
+    }
+    .dot.on  { background: var(--ok);   box-shadow: 0 0 6px var(--ok); }
+    .dot.run { background: var(--acc2); box-shadow: 0 0 6px var(--acc2); animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ── WEBCAM ── */
+    .cam-wrap { flex:1; position:relative; background:#000; min-height:340px; }
+    #vid { width:100%; height:100%; object-fit:cover; display:block; transform:scaleX(-1); }
+    #cvs { display:none; }
+
+    .cam-ov {
+      position:absolute; inset:0;
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+      background:rgba(0,0,0,.75); font-size:.88rem; color:var(--muted); transition:opacity .3s;
+    }
+    .cam-ov .ico { font-size:44px; }
+    .cam-ov.hide { opacity:0; pointer-events:none; }
+
+    /* live letter badge on video */
+    .vid-badge {
+      position:absolute; top:12px; right:12px;
+      background:rgba(0,0,0,.8); border:2px solid var(--acc);
+      border-radius:10px; padding:8px 14px; text-align:center;
+      backdrop-filter:blur(6px); display:none;
+    }
+    .vb-letter { font-size:2.4rem; font-weight:800; color:var(--acc); line-height:1; }
+    .vb-conf   { font-size:.68rem; color:var(--muted); margin-top:2px; }
+
+    /* top-3 strip */
+    .top3 { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); display:flex; gap:5px; }
+    .t3chip {
+      background:rgba(0,0,0,.78); border:1px solid rgba(255,255,255,.12);
+      border-radius:6px; padding:3px 8px; font-size:.7rem; color:var(--txt);
+      backdrop-filter:blur(4px);
+    }
+    .t3chip.best { border-color:var(--acc2); color:var(--acc2); }
+
+    /* conf bar */
+    .conf-bar { height:3px; background:rgba(255,255,255,.07); }
+    .conf-fill { height:100%; width:0%; background:linear-gradient(90deg,var(--acc),var(--acc2)); transition:width .08s; }
+
+    /* controls */
+    .ctrl { display:flex; flex-wrap:wrap; gap:8px; padding:12px 16px; border-top:1px solid var(--border); }
+    .btn {
+      display:inline-flex; align-items:center; gap:6px;
+      padding:8px 14px; border-radius:7px; border:none;
+      font-size:.8rem; font-weight:600; cursor:pointer; transition:all .15s;
+    }
+    .btn:disabled { opacity:.35; cursor:not-allowed; }
+    .btn-p { background:var(--acc); color:#fff; }
+    .btn-p:not(:disabled):hover { background:#7c74ff; transform:translateY(-1px); }
+    .btn-s { background:var(--surf2); color:var(--txt); border:1px solid var(--border); }
+    .btn-s:not(:disabled):hover { border-color:var(--acc); }
+    .btn-d { background:rgba(239,68,68,.13); color:var(--danger); border:1px solid rgba(239,68,68,.28); }
+    .btn-d:not(:disabled):hover { background:rgba(239,68,68,.22); }
+
+    /* ── TEXT PANEL ── */
+    .text-panel { display:flex; flex-direction:column; }
+
+    .big-ltr {
+      display:flex; align-items:center; justify-content:center;
+      font-size:8rem; font-weight:900; color:var(--acc);
+      min-height:150px; padding:10px;
+      text-shadow:0 0 50px rgba(108,99,255,.3);
+      transition:all .1s ease; letter-spacing:-3px;
+    }
+    .big-ltr.empty { font-size:2rem; color:var(--muted); font-weight:300; letter-spacing:0; }
+
+    .out-wrap { flex:1; display:flex; flex-direction:column; padding:14px 18px; gap:10px; }
+    .out-lbl  { font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; }
+
+    #textOut {
+      flex:1; min-height:100px;
+      background:var(--surf2); border:1px solid var(--border); border-radius:9px;
+      padding:14px; font-size:1.35rem; font-weight:500;
+      font-family:'Courier New', monospace;
+      color:var(--txt); line-height:1.6; letter-spacing:2px;
+      word-break:break-all; overflow-y:auto;
+    }
+    .cursor {
+      display:inline-block; width:2px; height:1.15em;
+      background:var(--acc); vertical-align:text-bottom;
+      animation:cur 1s step-end infinite;
+    }
+    @keyframes cur { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    /* hold bar */
+    .hold-row {
+      display:flex; align-items:center; gap:8px;
+      padding:7px 11px;
+      background:var(--surf2); border:1px solid var(--border); border-radius:7px;
+      font-size:.76rem; color:var(--muted);
+    }
+    .hold-track { flex:1; height:5px; background:rgba(255,255,255,.06); border-radius:3px; overflow:hidden; }
+    .hold-fill  { height:100%; width:0%; border-radius:3px;
+                  background:linear-gradient(90deg,var(--acc),var(--acc2)); transition:width .04s linear; }
+
+    /* stats */
+    .stats-row {
+      display:flex; align-items:center; gap:8px;
+      padding:0 18px 14px; flex-wrap:wrap;
+    }
+    .stat { background:var(--surf2); border:1px solid var(--border); border-radius:7px; padding:7px 12px; text-align:center; }
+    .sv { font-size:1rem; font-weight:700; color:var(--acc); }
+    .sl { font-size:.65rem; color:var(--muted); text-transform:uppercase; margin-top:1px; }
+
+    /* ── ALPHABET ── */
+    .alpha {
+      grid-column:1/-1;
+      background:var(--surf); border:1px solid var(--border); border-radius:14px;
+      padding:16px 20px;
+    }
+    .alpha h3 { font-size:.75rem; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin-bottom:11px; }
+    .chips { display:flex; flex-wrap:wrap; gap:5px; }
+    .chip {
+      background:var(--surf2); border:1px solid var(--border); border-radius:5px;
+      width:34px; height:34px; display:flex; align-items:center; justify-content:center;
+      font-size:.82rem; font-weight:600; transition:all .1s;
+    }
+    .chip.hl { background:var(--acc); border-color:var(--acc); color:#fff; box-shadow:0 0 10px rgba(108,99,255,.45); transform:scale(1.1); }
+
+    /* ── TOAST ── */
+    #toast {
+      position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
+      background:var(--surf2); border:1px solid var(--border); border-radius:9px;
+      padding:9px 18px; font-size:.82rem;
+      opacity:0; pointer-events:none; transition:opacity .22s; z-index:999;
+    }
+    #toast.show { opacity:1; }
+
+    @media (max-width:760px) {
+      main { grid-template-columns:1fr; }
+      .alpha { grid-column:1; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>ASL <span>→</span> Text</h1>
+  <span id="modelBadge" class="model-status {{ 'ok' if model_ready else 'err' }}">
+    {{ 'Model Ready' if model_ready else 'Model Missing' }}
+  </span>
+  <span class="hbadge">MEDIAPIPE + KERAS</span>
+</header>
+
+<main>
+
+  <!-- ── Camera ── -->
+  <div class="panel">
+    <div class="ph">
+      <div class="dot" id="camDot"></div>
+      <h2>Camera Feed</h2>
+      <span id="camStatus" style="margin-left:auto;font-size:.72rem;color:var(--muted)">Off</span>
+    </div>
+    <div class="cam-wrap">
+      <video id="vid" autoplay muted playsinline></video>
+      <canvas id="cvs"></canvas>
+      <div class="cam-ov" id="camOv">
+        <span class="ico">📷</span>
+        <span>Click "Start Camera" to begin</span>
+      </div>
+      <div class="vid-badge" id="vidBadge">
+        <div class="vb-letter" id="vbLetter">–</div>
+        <div class="vb-conf"   id="vbConf">0%</div>
+      </div>
+      <div class="top3" id="top3Strip"></div>
+    </div>
+    <div class="conf-bar"><div class="conf-fill" id="confFill"></div></div>
+    <div class="ctrl">
+      <button class="btn btn-p" id="btnStart">▶ Start</button>
+      <button class="btn btn-d" id="btnStop"  disabled>⏹ Stop</button>
+      <button class="btn btn-s" id="btnPause" disabled>⏸ Pause</button>
+      <button class="btn btn-s" id="btnSpace" disabled>␣ Space</button>
+      <button class="btn btn-d" id="btnClear">✕ Clear</button>
+    </div>
+  </div>
+
+  <!-- ── Text output ── -->
+  <div class="panel text-panel">
+    <div class="ph">
+      <div class="dot" id="txtDot"></div>
+      <h2>Recognised Text</h2>
+    </div>
+    <div class="big-ltr empty" id="bigLtr">Show a sign…</div>
+    <div class="out-wrap">
+      <div class="out-lbl">Output</div>
+      <div id="textOut"><span class="cursor"></span></div>
+      <div class="hold-row">
+        🖐 Hold to type:
+        <div class="hold-track"><div class="hold-fill" id="holdFill"></div></div>
+        <span id="holdLabel">0 / 1.2s</span>
+      </div>
+    </div>
+    <div class="stats-row">
+      <div class="stat"><div class="sv" id="sLetters">0</div><div class="sl">Letters</div></div>
+      <div class="stat"><div class="sv" id="sWords">0</div><div class="sl">Words</div></div>
+      <div class="stat"><div class="sv" id="sConf">–</div><div class="sl">Conf</div></div>
+      <button class="btn btn-s" id="btnCopy" style="margin-left:auto">📋 Copy</button>
+      <button class="btn btn-d" id="btnBksp">⌫</button>
+    </div>
+  </div>
+
+  <!-- ── Alphabet ref ── -->
+  <div class="alpha">
+    <h3>🔤 ASL Fingerspelling — highlighted letter is currently detected</h3>
+    <div class="chips" id="chipsWrap"></div>
+  </div>
+
+</main>
+<div id="toast"></div>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────
+const POLL_MS    = 80;    // send a frame every 80ms (~12fps) — sweet spot for latency vs CPU
+const HOLD_MS    = 1200;  // ms to hold same letter before it's committed
+const MIN_CONF   = 0.4;   // min confidence to start hold timer
+const STABLE_N   = 2;     // frames of same letter needed before hold starts
+
+// ── State ────────────────────────────────────────────────────────────────
+let stream=null, capturing=false, paused=false, pollTimer=null;
+let typedText='';
+let holdLetter=null, holdStart=null, holdCooldown=false;
+let stableLetter=null, stableCount=0;
+let inflight=false; // prevent overlapping requests
+
+// ── DOM ──────────────────────────────────────────────────────────────────
+const vid      = document.getElementById('vid');
+const cvs      = document.getElementById('cvs');
+const ctx2d    = cvs.getContext('2d');
+const camOv    = document.getElementById('camOv');
+const camDot   = document.getElementById('camDot');
+const txtDot   = document.getElementById('txtDot');
+const camStatus= document.getElementById('camStatus');
+const bigLtr   = document.getElementById('bigLtr');
+const textOut  = document.getElementById('textOut');
+const vidBadge = document.getElementById('vidBadge');
+const vbLetter = document.getElementById('vbLetter');
+const vbConf   = document.getElementById('vbConf');
+const confFill = document.getElementById('confFill');
+const holdFill = document.getElementById('holdFill');
+const holdLabel= document.getElementById('holdLabel');
+const top3Strip= document.getElementById('top3Strip');
+
+// ── Alphabet chips ───────────────────────────────────────────────────────
+const LABELS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ','SPACE','DELETE','NOTHING'];
+const chipMap = {};
+const wrap = document.getElementById('chipsWrap');
+LABELS.forEach(l => {
+  const c = document.createElement('div');
+  c.className = 'chip';
+  c.textContent = l==='NOTHING'?'∅':l==='SPACE'?'␣':l==='DELETE'?'⌫':l;
+  c.title = l;
+  wrap.appendChild(c);
+  chipMap[l] = c;
+});
+function hlChip(l) {
+  Object.values(chipMap).forEach(c=>c.classList.remove('hl'));
+  if(l && chipMap[l.toUpperCase()]) chipMap[l.toUpperCase()].classList.add('hl');
+}
+
+// ── Buttons ──────────────────────────────────────────────────────────────
+document.getElementById('btnStart').onclick = startCam;
+document.getElementById('btnStop').onclick  = stopCam;
+document.getElementById('btnPause').onclick = togglePause;
+document.getElementById('btnSpace').onclick = ()=>commitChar(' ');
+document.getElementById('btnClear').onclick = clearAll;
+document.getElementById('btnCopy').onclick  = copyText;
+document.getElementById('btnBksp').onclick  = backspace;
+
+async function startCam() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'}});
+    vid.srcObject = stream;
+    camOv.classList.add('hide');
+    camDot.className = 'dot on';
+    camStatus.textContent = 'Live';
+    capturing = true;
+    document.getElementById('btnStart').disabled = true;
+    document.getElementById('btnStop').disabled  = false;
+    document.getElementById('btnPause').disabled = false;
+    document.getElementById('btnSpace').disabled = false;
+    startPolling();
+    toast('📷 Camera started!');
+  } catch(e) { toast('❌ Camera error: '+e.message); }
+}
+
+function stopCam() {
+  capturing = false; paused = false;
+  clearInterval(pollTimer);
+  stream?.getTracks().forEach(t=>t.stop());
+  stream = null; vid.srcObject = null;
+  camOv.classList.remove('hide');
+  camDot.className='dot'; txtDot.className='dot';
+  camStatus.textContent='Off';
+  document.getElementById('btnStart').disabled=false;
+  document.getElementById('btnStop').disabled=true;
+  document.getElementById('btnPause').disabled=true;
+  document.getElementById('btnSpace').disabled=true;
+  document.getElementById('btnPause').textContent='⏸ Pause';
+  vidBadge.style.display='none';
+  confFill.style.width='0%';
+  top3Strip.innerHTML='';
+  resetHold();
+  bigLtr.textContent='Show a sign…'; bigLtr.className='big-ltr empty';
+  hlChip(null);
+  toast('Camera stopped');
+}
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById('btnPause').textContent = paused ? '▶ Resume' : '⏸ Pause';
+  camStatus.textContent = paused ? 'Paused' : 'Live';
+  camDot.className = paused ? 'dot on' : 'dot run';
+  if(paused) resetHold();
+}
+
+// ── Polling loop — HTTP POST ─────────────────────────────────────────────
+function startPolling() {
+  pollTimer = setInterval(sendFrame, POLL_MS);
+}
+
+async function sendFrame() {
+  if (!capturing || paused || inflight) return;
+  if (!vid.videoWidth) return;
+
+  cvs.width  = vid.videoWidth;
+  cvs.height = vid.videoHeight;
+  // Draw un-mirrored (raw) frame for backend — CSS mirror is display-only
+  ctx2d.drawImage(vid, 0, 0, cvs.width, cvs.height);
+  const imageData = cvs.toDataURL('image/jpeg', 0.6);
+
+  inflight = true;
+  camDot.className = 'dot run';
+
+  try {
+    const res  = await fetch('/api/recognize', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({frame: imageData})
+    });
+    const data = await res.json();
+    handlePrediction(data);
+  } catch(e) {
+    // network glitch — skip frame silently
+  } finally {
+    inflight = false;
+  }
+}
+
+// ── Prediction handler ───────────────────────────────────────────────────
+function handlePrediction(data) {
+  if (data.error) { toast('⚠️ '+data.error); return; }
+
+  if (!data.hand_detected) {
+    vidBadge.style.display='none';
+    confFill.style.width='0%';
+    top3Strip.innerHTML='';
+    bigLtr.textContent='No hand'; bigLtr.className='big-ltr empty';
+    camDot.className='dot on';
+    hlChip(null); resetHold();
+    return;
+  }
+
+  const letter = data.letter.toUpperCase();
+  const conf   = data.confidence;
+
+  // UI updates — instant
+  confFill.style.width = Math.round(conf*100)+'%';
+  document.getElementById('sConf').textContent = Math.round(conf*100)+'%';
+  hlChip(letter);
+
+  vidBadge.style.display='block';
+  vbLetter.textContent = letter==='SPACE'?'␣':letter==='DELETE'?'⌫':letter;
+  vbConf.textContent   = Math.round(conf*100)+'%';
+  bigLtr.className     = 'big-ltr';
+  bigLtr.textContent   = letter==='SPACE'?'␣':letter==='DELETE'?'⌫':letter;
+  txtDot.className     = 'dot run';
+
+  if(data.top3) {
+    top3Strip.innerHTML = data.top3.map((t,i)=>
+      `<div class="t3chip${i===0?' best':''}">${t.letter==='NOTHING'?'∅':t.letter==='SPACE'?'␣':t.letter} ${Math.round(t.conf*100)}%</div>`
+    ).join('');
+  }
+
+  // Skip commit logic for NOTHING
+  if(letter==='NOTHING') { resetHold(); return; }
+
+  // Stability buffer: require STABLE_N consecutive same-letter frames
+  if(letter !== stableLetter) {
+    stableLetter=letter; stableCount=1; resetHold(); return;
+  }
+  stableCount++;
+  if(stableCount < STABLE_N) return;
+
+  // Below confidence threshold → don't start timer
+  if(conf < MIN_CONF) { resetHold(); return; }
+
+  // Hold-to-type
+  if(holdLetter !== letter) {
+    holdLetter=letter; holdStart=Date.now(); holdCooldown=false;
+  }
+  if(!holdCooldown) {
+    const held     = Date.now() - holdStart;
+    const progress = Math.min(held/HOLD_MS, 1);
+    holdFill.style.width  = Math.round(progress*100)+'%';
+    holdLabel.textContent = (held/1000).toFixed(1)+' / 1.2s';
+
+    if(held >= HOLD_MS) {
+      holdCooldown = true;
+      if     (letter==='DELETE') backspace();
+      else if(letter==='SPACE')  commitChar(' ');
+      else                       commitChar(letter);
+      setTimeout(()=>{ resetHold(); stableLetter=null; stableCount=0; }, 600);
+    }
+  }
+}
+
+function resetHold() {
+  holdLetter=null; holdStart=null; holdCooldown=false;
+  holdFill.style.width='0%'; holdLabel.textContent='0 / 1.2s';
+}
+
+// ── Text ─────────────────────────────────────────────────────────────────
+function commitChar(ch) {
+  typedText += ch; refreshOut();
+  if(ch!==' ') toast('✅ '+ch, 700);
+}
+function backspace() { typedText=typedText.slice(0,-1); refreshOut(); }
+function clearAll()  {
+  typedText=''; refreshOut();
+  document.getElementById('sLetters').textContent=0;
+  document.getElementById('sWords').textContent=0;
+  document.getElementById('sConf').textContent='–';
+  toast('🗑️ Cleared');
+}
+function refreshOut() {
+  const safe = typedText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  textOut.innerHTML = safe + '<span class="cursor"></span>';
+  textOut.scrollTop = textOut.scrollHeight;
+  document.getElementById('sLetters').textContent = typedText.replace(/ /g,'').length;
+  document.getElementById('sWords').textContent   = typedText.trim().split(/\s+/).filter(Boolean).length;
+}
+function copyText() {
+  if(!typedText) return toast('Nothing to copy!');
+  navigator.clipboard.writeText(typedText).then(()=>toast('📋 Copied!'));
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────
+let toastTimer;
+function toast(msg, ms=2000) {
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'), ms);
+}
+</script>
+</body>
+</html>
