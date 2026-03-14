@@ -3,5 +3,7 @@ services:
     name: asl-to-text
     env: python
     plan: free
+    runtime: python
+    pythonVersion: "3.11.0"
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
